@@ -19,6 +19,9 @@ class PersonaPostsMixin:
         detect = DetectionActions(self.device_manager)
         post_actions = ClickActions(self.device_manager)
 
+        # Dedup the analyzed account's own writing lines across ALL scanned posts.
+        style_seen: set = set()
+
         for post_idx in range(self.max_posts):
             try:
                 if not detect.is_post_grid_visible():
@@ -46,8 +49,9 @@ class PersonaPostsMixin:
                         f"Caption post {post_idx + 1} collect\u00e9e",
                     )
 
-                comments = self._collect_comments(post_idx)
+                comments, owner_lines = self._collect_comments(post_idx, style_seen)
                 collected["comments"].extend(comments)
+                collected["writing_style_samples"].extend(owner_lines)
 
                 self.device.press("back")
                 time.sleep(1.5)

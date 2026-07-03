@@ -40,6 +40,7 @@ class PersonaAnalysisBridge(
             "posts_count": None,
             "post_captions": [],
             "comments": [],
+            "writing_style_samples": [],
             "profile_screenshot": None,
         }
 
@@ -64,9 +65,11 @@ class PersonaAnalysisBridge(
 
             total = len(collected["post_captions"])
             total_comments = len(collected["comments"])
+            total_style = len(collected["writing_style_samples"])
             _ipc.status(
                 "completed",
-                f"Analyse termin\u00e9e - {total} posts, {total_comments} commentaires collect\u00e9s",
+                f"Analyse termin\u00e9e - {total} posts, {total_comments} commentaires collect\u00e9s"
+                + (f", {total_style} lignes de son style" if total_style else ""),
             )
 
             return {"success": True, "data": collected}
