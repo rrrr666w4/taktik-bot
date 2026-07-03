@@ -11,6 +11,7 @@ from ...ui.selectors.surfaces.post.grid import POST_GRID_SELECTORS
 from ...ui.selectors.surfaces.post.likers import POST_LIKERS_SELECTORS
 from ...ui.selectors.surfaces.post.share_sheet import POST_SHARE_SHEET_SELECTORS
 from taktik.core.shared.behavior.gesture_primitives import human_scroll_raw
+from taktik.core.shared.behavior.grid_entry import GRID_COLUMNS
 from .detection import is_in_post_view, is_likers_popup_open
 
 
@@ -42,6 +43,49 @@ def open_first_post_of_profile(device, logger=None) -> bool:
     except Exception as e:
         if logger:
             logger.error(f"Error opening first post: {e}")
+        return False
+
+
+def open_post_at_position(device, index: int, logger=None) -> bool:
+    """Open the profile-grid post at absolute 1-based ``index``, scrolling the grid DOWN (humanized)
+    to reveal deeper rows when the cell is not on screen yet. Returns True if the post viewer opened.
+
+    Lets a scan page PAST the initially visible posts (grid cells carry their position in
+    content-desc, FR/EN). 3-column grid: row = (index-1)//3 + 1, col = (index-1)%3 + 1. The like
+    workflow keeps its own humanized variant (`_open_post_at_position`) for engagement; this
+    standalone one only needs the device and is used by read-only scans (e.g. persona style)."""
+    if index < 1:
+        index = 1
+    row = (index - 1) // GRID_COLUMNS + 1
+    col = (index - 1) % GRID_COLUMNS + 1
+    selector = DETECTION_SELECTORS.post_grid_cell_by_position(row, col)
+    try:
+        target = None
+        for _ in range(8):
+            element = device.xpath(selector)
+            if element.exists:
+                target = element
+                break
+            # Reveal deeper rows with a humanized grid scroll (never a fixed-coordinate swipe).
+            human_scroll_raw(device, "down", distance_ratio=0.6)
+            time.sleep(0.7)
+
+        if target is None:
+            if logger:
+                logger.info(f"open_post_at_position: post #{index} (row {row}, col {col}) not found after scroll")
+            return False
+
+        target.click()
+        time.sleep(3)
+        if is_in_post_view(device, logger):
+            return True
+        if logger:
+            logger.warning(f"open_post_at_position: post #{index} did not open")
+        return False
+
+    except Exception as exc:
+        if logger:
+            logger.error(f"open_post_at_position #{index}: {exc}")
         return False
 
 

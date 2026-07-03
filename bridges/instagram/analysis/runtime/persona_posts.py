@@ -29,18 +29,20 @@ class PersonaPostsMixin:
         _ipc.status("scraping_posts", f"Recherche de posts comment\u00e9s (objectif {self.max_posts})\u2026")
 
         from taktik.core.social_media.instagram.actions.atomic.detection import DetectionActions
-        from taktik.core.social_media.instagram.actions.atomic.interaction import ClickActions
+        from taktik.core.social_media.instagram.workflows.common.post_navigation import (
+            open_post_at_position,
+        )
 
         detect = DetectionActions(self.device_manager)
-        post_actions = ClickActions(self.device_manager)
 
         # Dedup the analyzed account's own writing lines across ALL scanned posts.
         style_seen: set = set()
         posts_with_comments = 0
         # Keep looking PAST comment-less posts to reach `max_posts` posts that actually have comments
-        # (the richest voice signal). Bounded to the visible grid (click_post_in_grid indexes the
-        # visible posts, no grid scroll) so we don't over-scan; captions are collected on EVERY post.
-        max_scan = min(max(self.max_posts * 2, 10), 15)
+        # (the richest voice signal). `open_post_at_position` SCROLLS THE GRID to reveal deeper rows,
+        # so the scan is NOT limited to the initially visible posts; bounded so we don't crawl the
+        # whole profile. Captions are collected on EVERY opened post.
+        max_scan = min(max(self.max_posts * 4, 20), 30)
 
         for post_idx in range(max_scan):
             if posts_with_comments >= self.max_posts:
@@ -52,14 +54,10 @@ class PersonaPostsMixin:
 
                 _ipc.status("opening_post", f"Ouverture du post {post_idx + 1}\u2026")
 
-                clicked = post_actions.click_post_in_grid(post_index=post_idx)
-                if not clicked:
-                    clicked = post_actions.click_post_thumbnail(post_index=post_idx)
-                if not clicked:
-                    # Out of visible posts (no grid scroll) -> stop.
-                    logger.info(f"[PersonaAnalysis] No more posts to scan at index {post_idx}")
+                # Absolute 1-based position; scrolls the grid to reach posts past the visible ones.
+                if not open_post_at_position(self.device, post_idx + 1, logger):
+                    logger.info(f"[PersonaAnalysis] No more posts to scan at position {post_idx + 1}")
                     break
-                time.sleep(2)
 
                 # Caption = the account's own writing too (voice signal) \u2014 collected on every post.
                 caption = self._extract_post_caption()
