@@ -36,6 +36,44 @@ def _platform_label(platform: str) -> str:
     return _PLATFORM_LABELS.get((platform or "instagram").lower(), (platform or "Instagram").title())
 
 
+def _build_style_block(who: str, samples: Any, max_samples: int = 12, max_len: int = 240) -> str:
+    """Few-shot writing-style block: real examples of how the operated account writes.
+
+    `samples` is an optional list of short authentic texts — the account's OWN organic
+    comment replies / DMs — scraped and injected by the desktop app. We imitate their
+    VOICE (vocabulary, length, punctuation, emoji habits, register), never their content.
+    Absent / empty / malformed -> "" so the open-source bot stays generic in standalone
+    mode (no dependency on a premium desktop feature).
+    """
+    if not isinstance(samples, (list, tuple)):
+        return ""
+    cleaned: list = []
+    seen = set()
+    for sample in samples:
+        if not isinstance(sample, str):
+            continue
+        text = " ".join(sample.split()).strip()
+        if len(text) < 3 or len(text) > max_len:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(text)
+        if len(cleaned) >= max_samples:
+            break
+    if not cleaned:
+        return ""
+    examples = "\n".join(f'- "{text}"' for text in cleaned)
+    return (
+        f"\nHere is how {who} ACTUALLY writes — real examples of their own comments/replies:\n"
+        f"{examples}\n"
+        "Mirror this voice: their vocabulary, sentence length, punctuation habits (or lack of), "
+        "emoji usage and level of formality/slang. Imitate the STYLE only — never reuse these "
+        "lines or their topics, and keep writing in the language required below.\n"
+    )
+
+
 class AIService:
     """Lightweight OpenRouter client for Bot AI operations."""
 
@@ -814,6 +852,7 @@ No markdown formatting."""
         if persona.get("niche"):
             niche = persona["niche"]
         brand_block = ""
+        style_block = ""
         if persona:
             who = persona.get("displayName") or "our account"
             voice_bits = []
@@ -829,6 +868,10 @@ No markdown formatting."""
                 "Let that expertise/voice shine through ONLY where it's natural — the comment must "
                 "stay about THEIR post and feel like a genuine person, NEVER a sales pitch or self-promo.\n"
             )
+            # Writing-style transfer: real examples of how THIS account actually writes (its own
+            # organic comment replies / DMs), scraped by the desktop app and injected on the persona.
+            # We imitate the VOICE, never the content. Absent -> "" (generic in standalone).
+            style_block = _build_style_block(who, persona.get("writingStyleSamples"))
 
         if self.ipc:
             self.ipc.ai_comment_generating(username, prompt=f"Smart comment for @{username} ({niche})",
@@ -843,7 +886,7 @@ No markdown formatting."""
 
         system_prompt = f"""You are a {_platform_label(platform)} engagement expert for the "{niche}" niche.
 Write a short, authentic comment that reacts to the post the way a REAL person scrolling {_platform_label(platform)} would — NOT a polished, literary or formal sentence.
-{brand_block}Rules:
+{brand_block}{style_block}Rules:
 - No hashtags
 - Write casually and spontaneously: a quick reaction (a few words to one short line), conversational — never stiff or formal
 - Do NOT end with a period or other formal end punctuation — real social-media comments almost never end with a full stop
