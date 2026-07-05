@@ -465,6 +465,7 @@ class AIService:
                 model=self.vision_model,
                 image_url=screenshot_thumb,
                 avatar_url=avatar_thumb,
+                prompt_key="promptClassifyProfile",
             )
 
         niche_map = self._niche_map_text()
@@ -775,7 +776,7 @@ class AIService:
         if self.ipc:
             screenshot_thumb = self._image_to_thumbnail_url(screenshot_path)
             self.ipc.ai_screenshot_analyzing(username, prompt="Analyzing post content", model=self.vision_model,
-                                             image_url=screenshot_thumb)
+                                             image_url=screenshot_thumb, prompt_key="promptAnalyzePost")
 
         _lang_full = {'fr': 'French', 'en': 'English', 'de': 'German', 'es': 'Spanish',
                       'pt': 'Portuguese', 'it': 'Italian', 'nl': 'Dutch'}.get(response_language, 'English')
@@ -882,7 +883,7 @@ No markdown formatting."""
 
         if self.ipc:
             self.ipc.ai_comment_generating(username, prompt=f"Smart comment for @{username} ({niche})",
-                                           model=self.text_model)
+                                           model=self.text_model, prompt_key="promptSmartComment")
 
         # Render the target language as a full name in the prompt ("Write in French", not "Write in
         # fr"). "auto" is handled separately (match the post's language).

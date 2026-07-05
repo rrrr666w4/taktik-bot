@@ -5,14 +5,20 @@ class AIIpcMixin:
     """Emit AI and Agent events through the core IPC send primitive."""
 
     def ai_profile_analyzing(self, username: str, prompt: str = None, model: str = None,
-                              image_url: str = None, avatar_url: str = None) -> None:
-        """Signal that AI profile classification has started."""
+                              image_url: str = None, avatar_url: str = None,
+                              prompt_key: str = None) -> None:
+        """Signal that AI profile classification has started.
+
+        `prompt` is an English fallback label; `prompt_key` (optional) is a stable i18n key the
+        desktop localizes for the card's operator-facing prompt line (with @{username})."""
         data = dict(username=username, target_username=username,
                     prompt=prompt, model=model, workflow_type="automation")
         if image_url:
             data["image"] = image_url
         if avatar_url:
             data["avatar_url"] = avatar_url
+        if prompt_key:
+            data["prompt_key"] = prompt_key
         self.send("ai_profile_start", **data)
 
     def ai_profile_analyzed(self, username: str, result: str, duration_ms: int = 0,
@@ -34,11 +40,16 @@ class AIIpcMixin:
         self.send("ai_profile_done", **data)
 
     def ai_screenshot_analyzing(self, username: str = None, prompt: str = None, model: str = None,
-                                  image_url: str = None) -> None:
-        """Signal that AI screenshot/post analysis has started."""
+                                  image_url: str = None, prompt_key: str = None) -> None:
+        """Signal that AI screenshot/post analysis has started.
+
+        `prompt_key` (optional) is a stable i18n key the desktop localizes for the card's prompt
+        line; `prompt` stays as the English fallback."""
         data = dict(target_username=username, prompt=prompt, model=model, workflow_type="automation")
         if image_url:
             data["image"] = image_url
+        if prompt_key:
+            data["prompt_key"] = prompt_key
         self.send("ai_screenshot_start", **data)
 
     def ai_screenshot_analyzed(self, result: str, username: str = None, duration_ms: int = 0,
@@ -54,10 +65,16 @@ class AIIpcMixin:
             data["screenshot"] = screenshot
         self.send("ai_screenshot_done", **data)
 
-    def ai_comment_generating(self, username: str, prompt: str = None, model: str = None) -> None:
-        """Signal that AI smart comment generation has started."""
-        self.send("ai_comment_start", target_username=username,
-                  prompt=prompt, model=model, workflow_type="automation")
+    def ai_comment_generating(self, username: str, prompt: str = None, model: str = None,
+                              prompt_key: str = None) -> None:
+        """Signal that AI smart comment generation has started.
+
+        `prompt_key` (optional) is a stable i18n key the desktop localizes for the card's prompt
+        line (with @{username}); `prompt` stays as the English fallback."""
+        data = dict(target_username=username, prompt=prompt, model=model, workflow_type="automation")
+        if prompt_key:
+            data["prompt_key"] = prompt_key
+        self.send("ai_comment_start", **data)
 
     def ai_comment_ready(self, username: str, comment: str, duration_ms: int = 0,
                          model: str = None, provider: str = None, cost_usd: float = None,

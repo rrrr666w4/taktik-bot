@@ -145,7 +145,9 @@ def install_instagram_ai_hooks(
     # talking to us and knows who it works for. Only when a persona was injected.
     persona = ai_config.get("accountProfile") if isinstance(ai_config, dict) else None
     if isinstance(persona, dict) and (persona.get("niche") or persona.get("displayName")):
-        IPCEmitter.emit_action("greeting", persona.get("displayName") or "votre compte", {
+        # Empty when the persona has no display name — the desktop then shows a localized
+        # "your account" fallback (do NOT hardcode a French label here).
+        IPCEmitter.emit_action("greeting", persona.get("displayName") or "", {
             "displayName": persona.get("displayName"),
             "niche": persona.get("niche"),
             "audience": persona.get("targetAudience"),
