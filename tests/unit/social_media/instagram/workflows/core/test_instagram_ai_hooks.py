@@ -3,6 +3,7 @@ from taktik.core.social_media.instagram.ui.selectors.surfaces.post import (
 )
 import pytest
 
+from taktik.core.shared.text import detect_text_language
 from taktik.core.social_media.instagram.workflows.core.ai_hooks import (
     crop_screenshot_to_post,
     install_instagram_ai_hooks,
@@ -106,6 +107,30 @@ def test_install_ai_hooks_without_device_is_noop_and_logs_warning():
 )
 def test_resolve_comment_language_policy(base_lang, post_language, expected):
     assert _resolve_comment_language(base_lang, post_language) == expected
+
+
+@pytest.mark.parametrize(
+    "base_lang, caption, expected",
+    [
+        # The account language is the ANCHOR; the CAPTION decides the comment language, never the
+        # vision guess. This is the effective policy the smart-comment hook applies.
+        # French account, French caption -> French (the erika.spahn regression).
+        ("fr", "Venez voir, revoir ou découvrir les IMPROMPTU pour deux concepts d'improvisa… more", "fr"),
+        # French account, English caption -> English is allowed as the bilingual 2nd language.
+        ("fr", "Omg this sounds so fun! love both concepts", "en"),
+        # French account, caption too short/ambiguous -> DEFAULT to the account language (NOT English).
+        ("fr", "🎉🎉", "fr"),
+        ("fr", "", "fr"),
+        ("fr", None, "fr"),
+        # English account: English caption -> English; a French post -> skip (an English-only
+        # account doesn't claim to speak French, so commenting in French isn't credible).
+        ("en", "The new collection is finally here, check it out", "en"),
+        ("en", "Venez nous voir pour deux concepts avec les amis", None),
+    ],
+)
+def test_effective_comment_language_from_caption(base_lang, caption, expected):
+    # Mirrors the hook: comment language = _resolve_comment_language(account_lang, caption_language).
+    assert _resolve_comment_language(base_lang, detect_text_language(caption)) == expected
 
 
 class _FakeDb:

@@ -225,33 +225,40 @@ def install_instagram_ai_hooks(
                         log("info", f"No post context for @{username} (no vision description, no caption), skipping comment (AI mode)")
                         return False
 
-                    # The author's CAPTION is ground truth for the post's language. The vision model's
-                    # guess is unreliable — a French post whose image carries stylised English design
-                    # text ("RETRAITE HOLISTIQUE") gets misread as English, which then made a French
-                    # account comment in English. When the caption confidently detects a language, it
-                    # OVERRIDES the vision guess (falls back to the vision guess only if the caption is
-                    # empty/too short/ambiguous).
-                    caption_lang = detect_text_language(post_caption)
-                    if caption_lang:
-                        prior = _detect_language_code(str(post_language).strip().lower()) if post_language else None
-                        if prior and prior != caption_lang:
-                            log("info", f"@{username}: post language from caption = '{caption_lang}' "
-                                        f"(overrides vision guess '{post_language}')")
-                        post_language = caption_lang
-
-                    # The comment's BASE language is the ACCOUNT's preferred language (the operated
-                    # account can target an audience different from the operator's app UI language),
-                    # falling back to the app language. The comment then follows the POST's language
-                    # but only within {base, English}; any other language → skip (not credible).
-                    # Persona (niche + brand voice) is injected into the AI config at launch.
+                    # The comment's BASE language is the ACCOUNT's preferred language — the reliable
+                    # anchor the operator SET (erika.spahn = French). It falls back to the app language
+                    # only if the account has none. Persona (niche + brand voice) is injected at launch.
                     account_persona = ai_config.get("accountProfile") if isinstance(ai_config, dict) else None
                     base_lang = (account_persona or {}).get("language") or language
-                    comment_lang = _resolve_comment_language(base_lang, post_language)
+
+                    # Which language to comment IN is decided from the author's CAPTION (ground truth),
+                    # NEVER from the vision model's post_language guess — that guess is unreliable (a
+                    # French post whose image carries stylised English design text reads as "english"),
+                    # and letting it win over the account language is exactly what made a French account
+                    # comment in English. So: caption confidently French/English → follow it; caption
+                    # absent/too short/ambiguous → DEFAULT to the account language (never the vision
+                    # guess). English is allowed as the universal 2nd language; a third language → skip.
+                    caption_lang = detect_text_language(post_caption)
+                    vision_lang = _detect_language_code(str(post_language).strip().lower()) if post_language else None
+                    if caption_lang and vision_lang and vision_lang != caption_lang:
+                        log("info", f"@{username}: comment language from caption = '{caption_lang}' "
+                                    f"(vision guessed '{post_language}', ignored)")
+                    # Safety veto (vision used ONLY to skip, never to force English): if the caption
+                    # gave no verdict but the vision model flags a language that is neither the account's
+                    # nor English (e.g. a genuinely Spanish post), skip instead of default-commenting in
+                    # the account language on a clearly-foreign post.
+                    base_code = str(base_lang or "en").lower()
+                    if caption_lang is None and vision_lang and vision_lang not in (base_code, "en"):
+                        log("info", f"Skipping comment for @{username}: post looks '{vision_lang}' "
+                                    f"(neither {base_lang} nor English)")
+                        return False
+
+                    comment_lang = _resolve_comment_language(base_lang, caption_lang)
                     if comment_lang is None:
                         log(
                             "info",
-                            f"Skipping comment for @{username}: post language "
-                            f"'{post_language}' is outside {{{base_lang}, english}}",
+                            f"Skipping comment for @{username}: caption language "
+                            f"'{caption_lang}' is outside {{{base_lang}, english}}",
                         )
                         return False
                     result = ai.generate_smart_comment(
