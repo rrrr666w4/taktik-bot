@@ -28,6 +28,10 @@ class RecordingAdapter:
     def send_feed_decision(self, author, action, reason=None, comment=None, visit_profile=False):
         self.calls.append(("feed_decision", author, action, reason, comment, visit_profile))
 
+    def send_instagram_profile_classification(self, username, classification, result="",
+                                              screenshot=None):
+        self.calls.append(("classification", username, classification, result, screenshot))
+
 
 def teardown_function():
     IPCEmitter.clear_bridge_adapter()
@@ -100,3 +104,26 @@ def test_emit_profile_skipped_is_noop_without_bridge_adapter():
     IPCEmitter.clear_bridge_adapter()
     # Must not raise when no bridge is injected (standalone/CLI runs).
     IPCEmitter.emit_profile_skipped("carol", reason="already_processed")
+
+
+def test_emit_profile_classification_forwards_to_adapter():
+    # The interaction hook classifies a profile (paid vision call); the classification must reach
+    # the bridge so the desktop PERSISTS the niche (else it's lost + re-paid on the next pass).
+    adapter = RecordingAdapter()
+    IPCEmitter.configure_bridge_adapter(adapter)
+
+    classification = {"niche_category": "Music & Entertainment", "niche": "performer",
+                      "gender": "F", "age_group": "25-34"}
+    IPCEmitter.emit_profile_classification("adelinekhelif", classification,
+                                           result="[Music & Entertainment] performer")
+
+    assert adapter.calls == [
+        ("classification", "adelinekhelif", classification,
+         "[Music & Entertainment] performer", None),
+    ]
+
+
+def test_emit_profile_classification_is_noop_without_bridge_adapter():
+    IPCEmitter.clear_bridge_adapter()
+    # Must not raise when no bridge is injected (standalone/CLI runs).
+    IPCEmitter.emit_profile_classification("carol", {"niche": "x"})

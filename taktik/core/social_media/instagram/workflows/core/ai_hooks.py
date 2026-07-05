@@ -376,6 +376,20 @@ def install_instagram_ai_hooks(
                                 f"{classification.get('age_group', '?')}"
                             ),
                         )
+                        # PERSIST the qualification (front owns the DB/sync): emit the same
+                        # ai_profile_done event the scraping path uses, so the desktop upserts
+                        # niche/profession/gender/age into the canonical qualification store. Without
+                        # this the interaction PAID for the vision classification but never saved it —
+                        # the profile stayed unqualified in the DB and got re-analysed (double cost)
+                        # on the next pass, which also defeated the _load_cached_qualification reuse.
+                        IPCEmitter.emit_profile_classification(
+                            username,
+                            classification,
+                            result=(
+                                f"[{classification.get('niche_category', '?')}] "
+                                f"{classification.get('niche', '?')}"
+                            ),
+                        )
                         # Lot 1: surface the engagement verdict on profile_data so the engine
                         # can later GATE follow/comment with it (no decision change yet — we log
                         # it and compare to what the random ratio would do, to vet quality first).

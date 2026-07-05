@@ -131,6 +131,26 @@ class IPCEmitter:
             log.debug(f"IPC profile_skipped event error: {exc}")
 
     @staticmethod
+    def emit_profile_classification(username: str, classification: Dict[str, Any],
+                                   result: str = "", screenshot: Optional[str] = None) -> None:
+        """Emit an AI profile classification so the desktop PERSISTS it (front owns the DB/sync).
+
+        Mirrors the scraping path: the desktop upserts niche/profession/gender/age into the
+        canonical qualification store. Used by the interaction hook, which previously classified a
+        profile (paying for the vision call) but never sent it, so the niche was lost and re-paid
+        for on the next pass. No-op in standalone (no bridge adapter)."""
+        bridge = _get_bridge()
+        if not bridge:
+            return
+        try:
+            if hasattr(bridge, "send_instagram_profile_classification"):
+                bridge.send_instagram_profile_classification(
+                    username, classification, result=result, screenshot=screenshot,
+                )
+        except Exception as exc:
+            log.debug(f"IPC profile classification event error: {exc}")
+
+    @staticmethod
     def emit_action(action_type: str, username: str, data: Optional[Dict[str, Any]] = None) -> None:
         """Emit a generic action event to the frontend."""
         bridge = _get_bridge()

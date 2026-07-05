@@ -36,6 +36,23 @@ def send_story_event(username: str, stories_watched: int = 1, stories_liked: int
     _ipc.story_event(username, stories_watched, stories_liked, profile_data)
 
 
+def send_instagram_profile_classification(username: str, classification: dict, result: str = "",
+                                          screenshot: str = None, duration_ms: int = 0,
+                                          model: str = None, provider: str = None,
+                                          cost_usd: float = None):
+    """Send an AI profile classification (interaction path) so the desktop PERSISTS it.
+
+    Emits the same `ai_profile_done` event the scraping path uses; the desktop's automation bridge
+    listens for it and upserts the niche/profession/gender/age into profile_ai_enrichments (the
+    canonical, Turso-synced qualification store, front-owned). Without this, a profile classified
+    during a target-IA automation was paid for but never saved — no niche in the DB, and the
+    interaction re-analysed it on the next pass (double cost)."""
+    _ipc.ai_profile_analyzed(
+        username, result, duration_ms=duration_ms, model=model, provider=provider,
+        cost_usd=cost_usd, classification=classification, screenshot=screenshot,
+    )
+
+
 def send_feed_decision(author: str, action: str, reason: str = None,
                        comment: str = None, visit_profile: bool = False):
     """Send a per-post feed decision (classic feed workflow) as an agent_decision
@@ -58,5 +75,6 @@ __all__ = [
     "send_follow_event",
     "send_like_event",
     "send_story_event",
+    "send_instagram_profile_classification",
     "send_feed_decision",
 ]
