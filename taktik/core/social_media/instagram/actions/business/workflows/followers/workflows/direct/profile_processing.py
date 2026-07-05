@@ -35,10 +35,13 @@ class DirectProfileProcessingMixin:
             return False
         
         self._human_like_delay('navigation')
-        
-        # Vérifier qu'on est bien sur un profil
-        if not self.detection_actions.is_on_profile_screen():
-            self.logger.warning(f"Not on profile screen after clicking @{username}")
+
+        # WAIT for the profile to LOAD before deciding. On a slow / tethered connection the profile
+        # page takes several seconds; a single immediate check would wrongly conclude "not a profile"
+        # and skip the follower (mislabelled as filtered). This is exactly the case where 17/20
+        # profiles got skipped without ever loading.
+        if not self.detection_actions.wait_for_profile_screen(timeout=8.0):
+            self.logger.warning(f"Profile did not load after clicking @{username} (slow connection?)")
             if not self._ensure_on_followers_list(target_username):
                 return None  # Critical
             stats['errors'] += 1

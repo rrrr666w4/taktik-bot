@@ -77,7 +77,23 @@ class ScreenDetectionMixin(BaseAction):
             self.logger.debug("❌ Not on profile screen")
         
         return is_profile
-    
+
+    def wait_for_profile_screen(self, timeout: float = 8.0, interval: float = 0.4) -> bool:
+        """Poll `is_on_profile_screen` up to `timeout` seconds.
+
+        On a slow / tethered connection the profile page can take several seconds to load after a
+        tap; a single immediate check would wrongly conclude "not a profile" and skip the follower
+        (mislabelling it as filtered). The batched screen-signal cache is cleared each poll so every
+        check reads a FRESH dump."""
+        deadline = time.monotonic() + max(0.0, timeout)
+        while True:
+            self._screen_signal_snapshot_cache = None  # force a fresh screen read each iteration
+            if self.is_on_profile_screen():
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(interval)
+
     def is_on_own_profile(self) -> bool:
         if not self.is_on_profile_screen():
             self.logger.debug("❌ Not on profile screen")

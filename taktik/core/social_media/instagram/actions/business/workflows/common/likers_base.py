@@ -151,9 +151,10 @@ class LikersWorkflowBase(BaseBusinessAction):
 
                 self._human_like_delay('click')
 
-                # Verify profile screen
-                if not self.detection_actions.is_on_profile_screen():
-                    self.logger.warning(f"Not on profile screen after clicking @{username}")
+                # WAIT for the profile to LOAD (slow/tethered connections take seconds); a single
+                # immediate check would wrongly skip a still-loading profile.
+                if not self.detection_actions.wait_for_profile_screen(timeout=8.0):
+                    self.logger.warning(f"Profile did not load after clicking @{username} (slow connection?)")
                     _ledger(username, "error", "profile_screen_missing")
                     if not self._ensure_on_likers_popup():
                         self.logger.error("Could not recover to likers popup, stopping")
