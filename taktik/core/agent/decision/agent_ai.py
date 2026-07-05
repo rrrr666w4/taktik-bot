@@ -12,6 +12,21 @@ from loguru import logger
 from taktik.core.agent.kernel.ports import AgentAIService
 
 
+# Full language names for the operator-facing "reason" field. The reason is shown in the Taktik
+# Agent panel, so it must follow the APP language (unlike the `comment`, which is audience-facing
+# and matches the post's language). Codes match the desktop app language.
+_REASON_LANG_NAMES = {
+    "fr": "French", "en": "English", "es": "Spanish", "pt": "Portuguese",
+    "it": "Italian", "de": "German", "nl": "Dutch", "ar": "Arabic",
+}
+
+
+def _reason_language_rule(language: str) -> str:
+    """A prompt line forcing the operator-facing `reason` into the app language."""
+    lang_name = _REASON_LANG_NAMES.get((language or "en").lower(), "English")
+    return f'\n- Write the "reason" field in {lang_name} (it is shown to the operator in the app).'
+
+
 # ---------------------------------------------------------------------------
 # System prompts
 # ---------------------------------------------------------------------------
@@ -70,9 +85,11 @@ Rules:
 class AgentAI:
     """Brain of the Taktik Agent: decides what to do with each feed post and profile."""
 
-    def __init__(self, ai_service: AgentAIService, ipc=None):
+    def __init__(self, ai_service: AgentAIService, ipc=None, language: str = "en"):
         self.ai_service = ai_service
         self.ipc = ipc
+        # App (operator) language — drives the language of the operator-facing `reason`.
+        self.language = language or "en"
 
     # ------------------------------------------------------------------
     # Feed decision
@@ -96,7 +113,7 @@ class AgentAI:
                 "model": str,
             }
         """
-        system_prompt = _FEED_SYSTEM.format(persona=persona_block)
+        system_prompt = _FEED_SYSTEM.format(persona=persona_block) + _reason_language_rule(self.language)
         user_msg = f"Analyse this feed post and decide what to do. Post author: @{author_username}"
 
         if self.ipc:
@@ -176,7 +193,7 @@ class AgentAI:
                 "model": str,
             }
         """
-        system_prompt = _PROFILE_SYSTEM.format(persona=persona_block)
+        system_prompt = _PROFILE_SYSTEM.format(persona=persona_block) + _reason_language_rule(self.language)
         user_msg = f"Should I follow @{profile_username}?"
 
         if self.ipc:

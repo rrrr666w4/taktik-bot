@@ -319,7 +319,8 @@ class TaktikAgentWorkflow:
                 )
                 self._ai_service = ai_service
 
-            self._ai = AgentAI(ai_service=ai_service, ipc=self.ipc)
+            self._ai = AgentAI(ai_service=ai_service, ipc=self.ipc,
+                               language=self.config.get("language", "en"))
             logger.info("[TaktikAgent] AI engine initialized")
             # Generate hashtag pool now that AI is ready
             self._generate_hashtag_pool()
