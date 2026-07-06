@@ -16,9 +16,9 @@ class NotificationRepository(BaseRepository):
     """Persist scanned notifications, deduplicated by a synthesized content hash.
 
     Notification rows have no stable server id, so re-scans are made idempotent with a
-    ``content_hash`` over (platform, account, type, actor, body) and an INSERT OR IGNORE
-    against ``UNIQUE(platform, account_id, content_hash)`` — exactly the approach used for
-    ``dm_messages``. A re-seen notification only bumps ``last_seen_at``.
+    ``content_hash`` over the TIME/LANGUAGE-INDEPENDENT identity (platform, account, type, actor)
+    and an INSERT OR IGNORE against ``UNIQUE(platform, account_id, content_hash)`` — exactly the
+    approach used for ``dm_messages``. A re-seen notification only bumps ``last_seen_at``.
     """
 
     def ensure_table(self) -> None:
@@ -29,10 +29,38 @@ class NotificationRepository(BaseRepository):
         self._conn.commit()
 
     @staticmethod
+    def _stable_content(body: Optional[str], relative_time: Optional[str]) -> str:
+        """Language/time-independent core of a notification body, used in the dedup key.
+
+        A scanned body carries VOLATILE bits that changed the hash on every re-scan and re-inserted
+        the same notification (device: one follower produced 10 rows): the relative age ("4h"/"5 h"/
+        "1w"/"6 j"), the action-button label ("Follow back"/"Suivre en retour") and the whole phrase
+        in the app's CURRENT language ("started following you" vs "a commencé à vous suivre"). The
+        only stable part is the QUOTED content after the ":" — our comment/post text, identical
+        whatever the scan's language or time. So:
+          - follows / post-likes (no ":") -> "" -> they dedup on (type, actor) alone; a follow is a
+            follow, we must not count the same person again just because the age string changed;
+          - comment-likes / mentions / replies -> the quoted comment preview -> distinct comments
+            stay distinct, but the same comment re-scanned later collapses."""
+        if not body:
+            return ""
+        core = body.split(":", 1)[1] if ":" in body else ""
+        core = " ".join(core.split())
+        if relative_time:
+            rt = " ".join(str(relative_time).split())
+            if rt and core.endswith(rt):
+                core = core[: -len(rt)]
+        return core.strip().lower()
+
+    @staticmethod
     def content_hash(platform: str, account_id: int, ntype: Optional[str],
-                     actor: Optional[str], body: Optional[str]) -> str:
-        """Stable identity for a notification (no server id exists)."""
-        raw = f"{platform}\n{account_id}\n{ntype or ''}\n{actor or ''}\n{body or ''}"
+                     actor: Optional[str], body: Optional[str],
+                     relative_time: Optional[str] = None) -> str:
+        """Stable identity for a notification (no server id exists). Built only from time/language-
+        independent parts (see ``_stable_content``) so the same notification is not re-inserted on
+        every re-scan."""
+        core = NotificationRepository._stable_content(body, relative_time)
+        raw = f"{platform}\n{account_id}\n{ntype or ''}\n{actor or ''}\n{core}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def record(
@@ -55,7 +83,7 @@ class NotificationRepository(BaseRepository):
         """Insert the notification if new (returns True); else bump last_seen_at (False)."""
         self.ensure_table()
         actor = (actor_username or "").strip().lower() or None
-        chash = self.content_hash(platform, account_id, ntype, actor, body)
+        chash = self.content_hash(platform, account_id, ntype, actor, body, relative_time)
         cursor = self.execute(
             """
             INSERT OR IGNORE INTO notifications (

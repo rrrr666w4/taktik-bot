@@ -40,17 +40,42 @@ def test_reseen_bumps_last_seen_but_keeps_first_seen(conn):
     assert before is not None
 
 
-def test_distinct_actor_or_body_or_account_are_separate_rows(conn):
+def test_distinct_actor_type_account_and_quoted_content_are_separate_rows(conn):
     repo = NotificationRepository(conn)
     repo.record(platform="instagram", account_id=1, actor_username="alice",
-                ntype="post_like", body="liked your photo")
+                ntype="post_like", body="alice liked your photo")
     repo.record(platform="instagram", account_id=1, actor_username="carol",
-                ntype="post_like", body="liked your photo")          # other actor
-    repo.record(platform="instagram", account_id=1, actor_username="alice",
-                ntype="post_like", body="liked your reel")            # other body
+                ntype="post_like", body="carol liked your photo")          # other actor
     repo.record(platform="instagram", account_id=2, actor_username="alice",
-                ntype="post_like", body="liked your photo")           # other account
-    assert len(conn.execute("SELECT * FROM notifications").fetchall()) == 4
+                ntype="post_like", body="alice liked your photo")          # other account
+    repo.record(platform="instagram", account_id=1, actor_username="alice",
+                ntype="comment_like", body="alice liked your comment: nice")   # other type
+    repo.record(platform="instagram", account_id=1, actor_username="alice",
+                ntype="comment_like", body="alice liked your comment: cool")   # other quoted content
+    assert len(conn.execute("SELECT * FROM notifications").fetchall()) == 5
+
+
+def test_same_follow_across_rescans_dedups_despite_volatile_body(conn):
+    # The device bug: the SAME follower produced 10 rows because the body carried the relative age,
+    # the action label, and the app-language phrasing — all of which change between scans.
+    repo = NotificationRepository(conn)
+    kw = dict(platform="instagram", account_id=1, actor_username="_spoiled_kid", ntype="new_follower")
+    assert repo.record(**kw, body="_spoiled_kid started following you. 4h Follow back",
+                       relative_time="4h") is True
+    assert repo.record(**kw, body="_spoiled_kid a commencé à vous suivre. 5 h Suivre en retour",
+                       relative_time="5 h") is False   # FR re-scan, older age -> same notification
+    assert repo.record(**kw, body="_spoiled_kid started following you. 1w Follow back",
+                       relative_time="1w") is False    # a week later -> still the same follow
+    assert len(conn.execute("SELECT * FROM notifications").fetchall()) == 1
+
+
+def test_comment_like_same_comment_dedups_but_different_comment_is_new(conn):
+    repo = NotificationRepository(conn)
+    kw = dict(platform="instagram", account_id=1, actor_username="alice", ntype="comment_like")
+    assert repo.record(**kw, body="alice liked your comment: nice work 4h", relative_time="4h") is True
+    assert repo.record(**kw, body="alice liked your comment: nice work 5h", relative_time="5h") is False
+    assert repo.record(**kw, body="alice liked your comment: great post 5h", relative_time="5h") is True
+    assert len(conn.execute("SELECT * FROM notifications").fetchall()) == 2
 
 
 def test_actor_username_is_lowercased_and_persona_fields_stored(conn):
