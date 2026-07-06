@@ -6,7 +6,7 @@ import sys
 
 from bridges.instagram.engagement.runtime.notifications.bridge import NotificationsBridge
 from bridges.instagram.engagement.runtime.notifications.events import emit_notif_error, emit_notif_json, emit_notif_step
-from bridges.instagram.engagement.runtime.notifications.persistence import record_scan_notifications
+from bridges.instagram.engagement.runtime.notifications.persistence import build_known_checker, record_scan_notifications
 from bridges.instagram.runtime.ipc import logger
 
 
@@ -28,7 +28,10 @@ def cmd_scan(device_id: str, limit: int, account_username: str = None, package_n
     bridge = _connect(device_id, package_name, restart=True)
     # `limit` is interpreted as how many extra screens to scroll (0 = visible only).
     workflow = bridge.build_workflow()
-    result = workflow.scan(max_scrolls=max(0, limit))
+    # Early-stop: recognise notifications already recorded for this account (loaded once) so the
+    # scan stops scrolling once it reaches already-seen territory instead of re-scraping history.
+    known_checker = build_known_checker(account_username)
+    result = workflow.scan(max_scrolls=max(0, limit), known_checker=known_checker)
     items = result.get("items", [])
 
     # Persist + dedup (best-effort): annotate each item with `is_new` so the front can

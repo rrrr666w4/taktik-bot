@@ -92,6 +92,23 @@ def test_actor_username_is_lowercased_and_persona_fields_stored(conn):
     assert row["sync_id"] and len(row["sync_id"]) == 32  # hex(randomblob(16))
 
 
+def test_known_hash_recognizes_rescanned_notification_despite_volatile_body(conn):
+    # Core of the scan early-stop: a re-scanned notification must be recognised as already-known
+    # even though its body changed (age/language), so the scan can stop scrolling into old territory.
+    repo = NotificationRepository(conn)
+    repo.record(platform="instagram", account_id=1, actor_username="alice", ntype="new_follower",
+                body="alice started following you. 4h Follow back", relative_time="4h")
+    known = {r[0] for r in conn.execute("SELECT content_hash FROM notifications WHERE account_id = 1")}
+    # Same follow, later scan (older age, FR phrasing) -> recognised as known.
+    rescan = NotificationRepository.content_hash(
+        "instagram", 1, "new_follower", "alice", "alice a commencé à vous suivre. 1w Suivre en retour", "1w")
+    assert rescan in known
+    # A brand-new follower is NOT known.
+    fresh = NotificationRepository.content_hash(
+        "instagram", 1, "new_follower", "bob", "bob started following you. 2h Follow back", "2h")
+    assert fresh not in known
+
+
 def test_tiktok_section_without_actor_or_type(conn):
     repo = NotificationRepository(conn)
     assert repo.record(platform="tiktok", account_id=5, raw_category="activity",

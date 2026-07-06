@@ -31,6 +31,28 @@ class NotificationService:
         return conn
 
     @staticmethod
+    def known_content_hashes(platform: str, account_id: int) -> set:
+        """All content_hashes already recorded for this account — for the scan's early-stop.
+
+        Preloaded once so the scan can recognise already-seen notifications in memory (no per-row
+        DB hit) and stop scrolling once it reaches known territory. Best-effort: returns an empty
+        set on any error (=> the scan just reads fully, as before)."""
+        conn = NotificationService._open()
+        if conn is None:
+            return set()
+        try:
+            rows = conn.execute(
+                "SELECT content_hash FROM notifications WHERE platform = ? AND account_id = ?",
+                (platform, account_id),
+            ).fetchall()
+            return {r[0] for r in rows}
+        except Exception as exc:
+            logger.warning(f"Could not load known notification hashes: {exc}")
+            return set()
+        finally:
+            conn.close()
+
+    @staticmethod
     def record_notifications(
         *,
         platform: str,

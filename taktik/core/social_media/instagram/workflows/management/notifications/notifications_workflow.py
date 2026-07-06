@@ -459,7 +459,7 @@ class NotificationsEngagementWorkflow:
             return []
         return self._parse_requests(root)
 
-    def scan(self, max_scrolls: int = 3) -> Dict[str, Any]:
+    def scan(self, max_scrolls: int = 3, known_checker=None) -> Dict[str, Any]:
         """Read + classify the activity feed across a few screens (all families),
         AND navigate into the follow-requests sub-screen to enumerate the pending
         requests in the same pass (so the page gets the actionable list directly).
@@ -467,6 +467,10 @@ class NotificationsEngagementWorkflow:
         Returns ``{success, count, by_type, items, requests, has_grouped_requests}``.
         Items are de-duplicated by text, top-to-bottom; the grouped "follow requests"
         digest row is dropped from ``items`` since it is surfaced via ``requests``.
+
+        ``known_checker`` (optional ``item -> bool``): when provided, the scroll stops early once it
+        reaches notifications already recorded on a previous scan (the feed is chronological), so we
+        don't re-scrape the whole history each pass. None => read the feed fully (previous behaviour).
         """
         # Detect the app language on the HOME feed FIRST (Instagram just launched):
         # the bottom nav carries strong EN/FR content-desc signal there (Home/Profile/
@@ -501,6 +505,7 @@ class NotificationsEngagementWorkflow:
         seen_sections: set = set()
         self._expanded_keys: set = set()
         stale = 0
+        known_streak = 0  # consecutive screens that added only already-recorded notifications
         iteration_cap = max(max_scrolls + 1, 12)
         for index in range(iteration_cap):
             rows, headers = self._dump_screen()
@@ -524,6 +529,7 @@ class NotificationsEngagementWorkflow:
                     seen_sections.add(header)
                     self._notify("section", "running", header, section=header)
             new_count = 0
+            new_unknown = 0
             for row in rows:
                 key = row["text"].lower()
                 if key in seen:
@@ -538,8 +544,22 @@ class NotificationsEngagementWorkflow:
                         row["label"] = clean_label(real)
                 items.append(row)
                 new_count += 1
+                if known_checker is None or not known_checker(row):
+                    new_unknown += 1
             if new_count:
                 stale = 0
+                # EARLY-STOP: the activity feed is chronological (newest first). Once a screen adds
+                # only notifications we already recorded on a previous scan, we've scrolled into
+                # already-scraped territory — stop after two such screens instead of re-reading the
+                # whole history (Kevin: don't re-scrape known notifications). No checker (first scan
+                # / unknown account) => read fully, as before.
+                if known_checker is not None and new_unknown == 0:
+                    known_streak += 1
+                    if known_streak >= 2:
+                        self.logger.info("scan: reached already-known notifications — stopping early")
+                        break
+                else:
+                    known_streak = 0
                 self._scroll_down(1)
             elif self._tap_show_more():
                 time.sleep(1.5)       # let older notifications load

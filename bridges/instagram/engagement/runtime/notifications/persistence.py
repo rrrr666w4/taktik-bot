@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from bridges.instagram.runtime.ipc import logger
 from taktik.core.database import configure_db_service, get_db_service
 from taktik.core.database.notifications import NotificationService
+from taktik.core.database.repositories.notifications import NotificationRepository
 
 _PLATFORM = "instagram"
 
@@ -66,4 +67,33 @@ def record_scan_notifications(
         return [False] * len(items)
 
 
-__all__ = ["record_scan_notifications"]
+def build_known_checker(account_username: Optional[str]):
+    """Predicate ``item -> bool`` = "already recorded for this account", for the scan's early-stop.
+
+    Preloads the account's known content hashes ONCE so the scan can recognise already-seen
+    notifications in memory and stop scrolling into old, already-scraped territory. Returns None
+    when the account is unknown or nothing is recorded yet (=> the scan reads fully, as before).
+    Best-effort: never raises into the scan.
+    """
+    account_id = _account_id_for(account_username or "")
+    if account_id is None:
+        return None
+    try:
+        known = NotificationService.known_content_hashes(_PLATFORM, account_id)
+    except Exception as exc:
+        logger.warning(f"[NOTIF] Could not preload known hashes: {exc}")
+        return None
+    if not known:
+        return None  # first scan for this account -> read the whole feed
+
+    def _is_known(item: Dict[str, Any]) -> bool:
+        actor = (item.get("username") or "").strip().lower() or None
+        chash = NotificationRepository.content_hash(
+            _PLATFORM, account_id, item.get("type"), actor, item.get("text"), item.get("time"),
+        )
+        return chash in known
+
+    return _is_known
+
+
+__all__ = ["record_scan_notifications", "build_known_checker"]
