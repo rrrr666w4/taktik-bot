@@ -49,6 +49,7 @@ class LikersWorkflowBase(BaseBusinessAction):
         """
         processed_usernames: Set[str] = set()
         scroll_attempts = 0
+        consecutive_empty = 0
         known_usernames_streak = 0
         max_consecutive_known_usernames = effective_config.get('max_consecutive_known_usernames')
         if max_consecutive_known_usernames is not None:
@@ -78,12 +79,28 @@ class LikersWorkflowBase(BaseBusinessAction):
             visible_likers = self.detection_actions.get_visible_followers_with_elements()
 
             if not visible_likers:
+                consecutive_empty += 1
+                popup_open = self._is_likers_popup_open()
+                # WRONG SCREEN: tapping a REEL's like count can drop us into the full-screen clips/
+                # Reels viewer instead of the likers list, and the popup then never opens no matter
+                # how much we scroll. Detect it (likers-popup indicators absent for a couple of
+                # cycles — tolerates a slow-loading popup) and LEAVE this post instead of scrolling
+                # into the void (a real run wasted ~40s / 50 scrolls stuck on a reel viewer).
+                if not popup_open and consecutive_empty >= 2:
+                    self.logger.warning("Likers popup not open after retries (wrong screen, e.g. reel/clips viewer) — leaving this post")
+                    self._exit_wrong_likers_screen()
+                    break
+                # Popup IS open but shows no more likers after several scrolls → end of the list.
+                if popup_open and consecutive_empty >= 4:
+                    self.logger.debug("No more likers after several scrolls — end of list")
+                    break
                 self.logger.debug("No visible likers found on screen")
                 scroll_attempts += 1
                 self._scroll_likers_popup_up()
                 self._human_like_delay('scroll')
                 continue
 
+            consecutive_empty = 0
             new_likers_found = False
 
             for liker_data in visible_likers:
@@ -330,3 +347,12 @@ class LikersWorkflowBase(BaseBusinessAction):
             is_likers_popup_open_checker=self._is_likers_popup_open,
             verbose_logs=False
         )
+
+    def _exit_wrong_likers_screen(self) -> None:
+        """Best-effort: a single back press to leave the wrong fullscreen surface we got dropped into
+        (e.g. the reel/clips viewer), so the run isn't left stuck on it. Never raises."""
+        try:
+            self.device.press("back")
+            self._human_like_delay('navigation')
+        except Exception:
+            pass
