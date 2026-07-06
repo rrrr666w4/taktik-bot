@@ -32,20 +32,31 @@ class NotificationService:
 
     @staticmethod
     def known_content_hashes(platform: str, account_id: int) -> set:
-        """All content_hashes already recorded for this account — for the scan's early-stop.
+        """The set of STABLE content_hashes already recorded for this account — for the scan's
+        early-stop. Preloaded once so the scan recognises already-seen notifications in memory (no
+        per-row DB hit) and stops scrolling once it reaches known territory.
 
-        Preloaded once so the scan can recognise already-seen notifications in memory (no per-row
-        DB hit) and stop scrolling once it reaches known territory. Best-effort: returns an empty
-        set on any error (=> the scan just reads fully, as before)."""
+        We RECOMPUTE the stable hash from each stored row's (type, actor, body, relative_time)
+        rather than reading the ``content_hash`` column: rows recorded before the stable-hash change
+        carry a body-based hash that a re-scan will never reproduce, so reading the column would
+        make the early-stop blind to everything older. Recomputing here yields exactly the hash a
+        fresh scan computes, so both old and new rows are recognised — no data migration needed.
+        Best-effort: returns an empty set on any error (=> the scan reads fully, as before)."""
         conn = NotificationService._open()
         if conn is None:
             return set()
         try:
             rows = conn.execute(
-                "SELECT content_hash FROM notifications WHERE platform = ? AND account_id = ?",
+                "SELECT type, actor_username, body, relative_time FROM notifications "
+                "WHERE platform = ? AND account_id = ?",
                 (platform, account_id),
             ).fetchall()
-            return {r[0] for r in rows}
+            out = set()
+            for row in rows:
+                actor = (row["actor_username"] or "").strip().lower() or None
+                out.add(NotificationRepository.content_hash(
+                    platform, account_id, row["type"], actor, row["body"], row["relative_time"]))
+            return out
         except Exception as exc:
             logger.warning(f"Could not load known notification hashes: {exc}")
             return set()
