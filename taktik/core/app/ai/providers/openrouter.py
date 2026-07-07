@@ -27,6 +27,13 @@ DEFAULT_VISION_MODEL = "google/gemini-2.5-flash"
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+# Vision models (Gemini) bill images by 768px tiles. Raw device screenshots are
+# ~1080x2220 PNGs → ~6 tiles (~1550 image tokens) PER vision call, the dominant slice
+# of every profile/post analysis. Capping the LONG edge at 1536 brings a portrait shot
+# down to 2 tiles (~-67% image tokens) while keeping the width near 750px, so the
+# profile/post text stays legible. Tune this single knob to trade cost vs sharpness.
+VISION_IMAGE_MAX_EDGE = 1536
+
 # Platform display label for prompts (so the provider is reusable across platforms,
 # not hardcoded to Instagram). Defaults keep the Instagram wording byte-equivalent.
 _PLATFORM_LABELS = {"instagram": "Instagram", "tiktok": "TikTok"}
@@ -151,6 +158,34 @@ class AIService:
         with open(image_path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode("ascii")
         return f"data:{mime};base64,{b64}"
+
+    def _image_for_vision(self, image_path: str) -> Optional[str]:
+        """Downscale + JPEG-encode a screenshot before sending it to the vision model.
+
+        Device screenshots are ~1080x2220 PNGs; sent raw they tile into ~1550 image
+        tokens per call on Gemini (the dominant cost of each profile/post analysis).
+        Capping the long edge at VISION_IMAGE_MAX_EDGE drops a portrait shot to ~2 tiles
+        (~-67%) while keeping the width near 750px, so text stays legible (and
+        classify_profile_niche also feeds bio/name as text). Falls back to the raw image
+        if PIL is unavailable — never worse than before.
+        """
+        if not os.path.isfile(image_path):
+            return None
+        try:
+            from PIL import Image as PILImage
+            import io
+            with PILImage.open(image_path) as img:
+                img = img.convert("RGB")
+                img.thumbnail((VISION_IMAGE_MAX_EDGE, VISION_IMAGE_MAX_EDGE), PILImage.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=85, optimize=True)
+                b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+                return f"data:image/jpeg;base64,{b64}"
+        except ImportError:
+            # PIL missing (open-source standalone): send the raw image, as before.
+            return self._image_to_base64_url(image_path)
+        except Exception:
+            return self._image_to_base64_url(image_path)
 
     def _image_to_thumbnail_url(self, image_path: str, max_size: int = 400) -> Optional[str]:
         """Convert image to a small JPEG thumbnail for IPC display (lightweight, ~30-60KB)."""
@@ -299,7 +334,9 @@ class AIService:
     def vision_completion(self, system_prompt: str, user_prompt: str, image_path: str,
                           temperature: float = 0.3, max_tokens: int = 1500) -> Dict[str, Any]:
         """Vision completion — sends an image + prompt to the vision model."""
-        image_url = self._image_to_base64_url(image_path)
+        # Downscaled + JPEG (see _image_for_vision): device screenshots are huge PNGs and
+        # the image dominates each vision call's token cost. Never sends more than the raw.
+        image_url = self._image_for_vision(image_path)
         if not image_url:
             return {"success": False, "error": f"Image not found: {image_path}"}
 
