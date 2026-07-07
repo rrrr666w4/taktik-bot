@@ -38,8 +38,9 @@ def test_downscales_a_device_screenshot(tmp_path):
     # Long edge capped, aspect ratio preserved (portrait stays portrait).
     assert max(img.size) <= VISION_IMAGE_MAX_EDGE
     assert img.height > img.width
-    # 1080x2220 -> 747x1536: the width lands near ~750px (legible), not shrunk to nothing.
-    assert 700 <= img.width <= 800
+    # 1080x2220 at VISION_IMAGE_MAX_EDGE=768 -> 374x768: width tracks the configured cap,
+    # not a hardcoded pixel count (the knob is expected to be retuned deliberately).
+    assert img.width == round(VISION_IMAGE_MAX_EDGE * 1080 / 2220)
 
 
 def test_small_image_is_not_upscaled(tmp_path):
@@ -52,3 +53,17 @@ def test_small_image_is_not_upscaled(tmp_path):
 
 def test_missing_file_returns_none():
     assert _service()._image_for_vision("/no/such/file.png") is None
+
+
+def test_768_lands_on_the_one_tile_step():
+    """Documents WHY 768 was chosen: Gemini tiles by ceil(edge/768). At the current
+    VISION_IMAGE_MAX_EDGE, a device-portrait screenshot must land in exactly 1 tile
+    (the real cost step below 2 tiles at anything in (768, 1536])."""
+    import math
+
+    def gemini_tiles(w, h):
+        return math.ceil(w / 768) * math.ceil(h / 768)
+
+    w = round(VISION_IMAGE_MAX_EDGE * 1080 / 2220)
+    h = VISION_IMAGE_MAX_EDGE
+    assert gemini_tiles(w, h) == 1

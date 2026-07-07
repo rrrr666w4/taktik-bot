@@ -27,12 +27,17 @@ DEFAULT_VISION_MODEL = "google/gemini-2.5-flash"
 
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Vision models (Gemini) bill images by 768px tiles. Raw device screenshots are
-# ~1080x2220 PNGs → ~6 tiles (~1550 image tokens) PER vision call, the dominant slice
-# of every profile/post analysis. Capping the LONG edge at 1536 brings a portrait shot
-# down to 2 tiles (~-67% image tokens) while keeping the width near 750px, so the
-# profile/post text stays legible. Tune this single knob to trade cost vs sharpness.
-VISION_IMAGE_MAX_EDGE = 1536
+# Vision models (Gemini) bill images by 768px tiles — a QUANTIZED step, not a continuous
+# cost/quality dial: any long edge in (768, 1536] costs the SAME 2 tiles as 1536 itself
+# (ceil(edge/768) doesn't change until you cross a multiple of 768). Raw device screenshots
+# are ~1080x2220 PNGs → ~6 tiles (~1550 image tokens) raw. 1536 got that down to 2 tiles
+# (~-61%, ~750px wide, safe — Kevin validated no quality loss in production 2026-07-07).
+# 768 is the next real step DOWN to 1 tile (~-80% vs raw): width drops to ~375px, which
+# is a genuine detail loss for VISUAL judgment (post-thumbnail style/aesthetic, subtle
+# gender/age cues) — bio/stats/captions aren't at risk, they're sent as TEXT separately
+# (scraped, not OCR'd from the image). Kevin explicitly chose 768 in production after
+# reviewing a side-by-side comparison (2026-07-07) — re-validate before going lower.
+VISION_IMAGE_MAX_EDGE = 768
 
 # Platform display label for prompts (so the provider is reusable across platforms,
 # not hardcoded to Instagram). Defaults keep the Instagram wording byte-equivalent.
