@@ -297,28 +297,29 @@ class WorkflowHelpers:
             return None
     
     def update_workflow_session(self, session_id: int, status: str = 'COMPLETED') -> bool:
+        # Every caller of this method ends the session (COMPLETED, INTERRUPTED via the
+        # signal handler, ERROR in automation), so finalize with the full snapshot:
+        # end_time + stats_* aggregated from interactions. Electron only writes that
+        # snapshot on its own manual-stop path — bot-ended sessions used to keep
+        # stats_* at 0 and end_time NULL, under-reporting the account's real activity.
         try:
             session_duration = int(time.time() - self.automation.stats['start_time'])
-            update_data = {
-                'status': status,
-                'duration_seconds': session_duration
-            }
-            
+
             try:
                 local_db = get_local_database()
-                success = local_db.update_session(session_id, **update_data)
-                
+                success = local_db.finalize_session(session_id, status, duration_seconds=session_duration)
+
                 if success:
-                    self.logger.info(f"✅ Session {session_id} updated successfully")
+                    self.logger.info(f"✅ Session {session_id} finalized ({status})")
                     return True
                 else:
-                    self.logger.warning(f"⚠️ Session {session_id} update failed")
+                    self.logger.warning(f"⚠️ Session {session_id} finalize failed")
                     return False
-                    
+
             except Exception as db_error:
-                self.logger.error(f"❌ Database error updating session {session_id}: {db_error}")
+                self.logger.error(f"❌ Database error finalizing session {session_id}: {db_error}")
                 return False
-                
+
         except Exception as e:
-            self.logger.error(f"❌ Error updating session: {e}")
+            self.logger.error(f"❌ Error finalizing session: {e}")
             return False

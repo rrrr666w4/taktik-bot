@@ -452,9 +452,34 @@ class LocalDatabaseService:
             session = self.get_session(session_id)
             if session:
                 self.stats.record_session_completion(
-                    session['account_id'], 
-                    status, 
+                    session['account_id'],
+                    status,
                     kwargs.get('duration_seconds', 0)
+                )
+        return result
+
+    def finalize_session(self, session_id: int, status: str,
+                         duration_seconds: Optional[int] = None,
+                         error_message: Optional[str] = None) -> bool:
+        """Terminal session update: status + end_time + stats_* snapshot from interactions.
+
+        Use this (not update_session) for every end-of-session path the bot owns
+        (COMPLETED / INTERRUPTED / ERROR): update_session persists only the fields it
+        is given, so the stats_* snapshot columns stayed at 0 and end_time NULL for
+        sessions Electron never force-closed.
+        """
+        result = self.sessions.finalize(
+            session_id, status,
+            duration_seconds=duration_seconds,
+            error_message=error_message
+        )
+        if result and status in ('COMPLETED', 'FAILED', 'ERROR'):
+            session = self.get_session(session_id)
+            if session:
+                self.stats.record_session_completion(
+                    session['account_id'],
+                    status,
+                    duration_seconds or 0
                 )
         return result
     

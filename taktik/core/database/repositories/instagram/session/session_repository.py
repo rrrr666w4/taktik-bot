@@ -84,6 +84,70 @@ class SessionRepository(BaseRepository):
         )
         return cursor.rowcount > 0
 
+    def finalize(
+        self,
+        session_id: int,
+        status: str,
+        duration_seconds: Optional[int] = None,
+        error_message: Optional[str] = None
+    ) -> bool:
+        """Terminal update: status + end_time + the stats_* snapshot aggregated from
+        `interactions`.
+
+        The snapshot mirrors Electron's resolveSessionStats semantics exactly:
+        stats_total_interactions = likes + follows + comments + story_views + story_likes
+        (unfollows and profile visits are tracked but excluded from the total). Electron
+        only writes this snapshot on its own manual-stop path, so a session the bot ends
+        itself (COMPLETED / INTERRUPTED / ERROR) must write it here — the plain update()
+        used to persist only status+duration, leaving stats_* at 0 and end_time NULL even
+        though the interactions rows prove the work happened.
+        """
+        agg_rows = self.query(
+            """SELECT interaction_type, COUNT(*) AS count FROM interactions
+               WHERE platform = 'instagram' AND session_id = ?
+               GROUP BY interaction_type""",
+            (session_id,)
+        )
+        agg = {str(row['interaction_type']).lower(): int(row['count']) for row in agg_rows}
+        likes = agg.get('like', 0)
+        follows = agg.get('follow', 0)
+        unfollows = agg.get('unfollow', 0)
+        comments = agg.get('comment', 0)
+        story_views = agg.get('story_watch', 0)
+        story_likes = agg.get('story_like', 0)
+        profile_visits = agg.get('profile_visit', 0)
+        total = likes + follows + comments + story_views + story_likes
+
+        updates = [
+            "updated_at = datetime('now')",
+            "end_time = datetime('now')",
+            'status = ?',
+            'stats_total_interactions = ?',
+            'stats_likes = ?',
+            'stats_follows = ?',
+            'stats_unfollows = ?',
+            'stats_comments = ?',
+            'stats_story_views = ?',
+            'stats_story_likes = ?',
+            'stats_profile_visits = ?',
+        ]
+        values: List[Any] = [status, total, likes, follows, unfollows, comments,
+                             story_views, story_likes, profile_visits]
+
+        if duration_seconds is not None:
+            updates.append('duration_seconds = ?')
+            values.append(duration_seconds)
+        if error_message:
+            updates.append('error_message = ?')
+            values.append(error_message)
+
+        values.append(session_id)
+        cursor = self.execute(
+            f"UPDATE sessions_unified SET {', '.join(updates)} WHERE platform = 'instagram' AND legacy_session_id = ?",
+            tuple(values)
+        )
+        return cursor.rowcount > 0
+
     def find_by_id(self, session_id: int) -> Optional[Dict[str, Any]]:
         """Find session by ID (ORM-first, fallback to raw sqlite3)."""
         row = self.query_one_orm_first(
