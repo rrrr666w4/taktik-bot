@@ -74,3 +74,13 @@ def test_filters_do_not_disturb_the_rest_of_the_config():
     assert cfg['enrich_profiles'] is True
     assert cfg['deep_qualify'] is True
     assert cfg['type'] == 'target'
+
+
+def test_location_is_opt_in_and_off_by_default():
+    """Enriched scraping must NOT drag in the slow About-account navigation unless asked.
+
+    The location screen (country/city) is a separate, slower page whose back-press can overshoot;
+    the profile visit already yields stats/bio/filters without it. The default flipping to True
+    would silently slow down every enriched scrape and reintroduce that navigation bug."""
+    assert _cfg(enrichProfiles=True)['fetchLocation'] is False
+    assert _cfg(enrichProfiles=True, fetchLocation=True)['fetchLocation'] is True

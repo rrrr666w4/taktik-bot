@@ -268,12 +268,18 @@ class ScrapingListMixin(DeepQualifyMixin):
                                 element.click()
                             time.sleep(1.5)
                             
-                            # Use get_complete_profile_info with enrich=True for full data
-                            # emit_ipc=False / save_to_db=False: list_scraping owns the IPC + save
+                            # Visiting the profile already reads followers/posts/bio/website/
+                            # category — everything the filters and AI qualification need. The
+                            # `enrich` flag ONLY adds the "About this account" navigation (country/
+                            # city, date joined), a separate, slower screen whose back-press can
+                            # overshoot. It is opt-in (fetchLocation, default off): most scrapes
+                            # want the profile, not the location, and paying that navigation on
+                            # every profile is both slow and a source of navigation bugs.
+                            # emit_ipc=False / save_to_db=False: list_scraping owns the IPC + save.
                             enriched_data = self.profile_manager.get_complete_profile_info(
                                 username=username,
                                 navigate_if_needed=False,
-                                enrich=True,
+                                enrich=bool(self.config.get('fetchLocation', False)),
                                 emit_ipc=False,
                                 save_to_db=False
                             )

@@ -20,6 +20,10 @@ def build_scraping_config(config: dict) -> dict:
         'export_csv': config.get('exportCsv', True),
         'save_to_db': config.get('saveToDb', True),
         'enrich_profiles': config.get('enrichProfiles', False),
+        # Opt-in "About this account" navigation (country/city, date joined) — only meaningful
+        # when enrich_profiles is on. Off by default: the profile visit already yields stats/bio,
+        # and the location screen is slow + its back-press can overshoot.
+        'fetchLocation': bool(config.get('fetchLocation', False)),
     }
 
     # Profile filters. This mapper is a WHITELIST: anything not copied here never reaches the
