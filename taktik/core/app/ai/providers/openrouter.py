@@ -298,11 +298,30 @@ class AIService:
         results: Dict[str, Dict[str, str]] = {}
         clean = [u for u in usernames if u]
 
+        known_sub_niches = self._known_sub_niches
+        # Scale the token budget with the batch size: each username yields a small JSON object, and a
+        # full batch of 20 overflowed the old flat 1200 cap — the response was truncated
+        # ("Unterminated string") and the WHOLE batch was dropped.
+        max_tokens = max(1200, 220 + batch_size * 140)
+
+        def _ingest(username: str, data: Any) -> None:
+            if not isinstance(data, dict):
+                return
+            niche_val = str(data.get("niche") or "Other")
+            if niche_val not in known_sub_niches and niche_val != "Other":
+                logger.info(f"[AIService] Proposed new sub-niche '{niche_val}' for @{username}")
+            results[username] = {
+                "niche_category": str(data.get("niche_category") or "other"),
+                "niche": niche_val,
+                "gender": str(data.get("gender") or "unknown"),
+            }
+
         for i in range(0, len(clean), batch_size):
             batch = clean[i:i + batch_size]
             user_prompt = "Classify these Instagram usernames:\n" + "\n".join(f"- {u}" for u in batch)
+            text = ""
             try:
-                result = self.text_completion(system_prompt, user_prompt, temperature=0.1, max_tokens=1200)
+                result = self.text_completion(system_prompt, user_prompt, temperature=0.1, max_tokens=max_tokens)
                 if not result.get("success"):
                     logger.warning(f"[AIService] classify_following_usernames_batch failed: {result.get('error')}")
                     continue
@@ -315,19 +334,18 @@ class AIService:
                         text = text[4:]
                     text = text.strip()
                 batch_result = json.loads(text)
-                known_sub_niches = self._known_sub_niches
                 for username, data in batch_result.items():
-                    if isinstance(data, dict):
-                        niche_val = str(data.get("niche") or "Other")
-                        if niche_val not in known_sub_niches and niche_val != "Other":
-                            logger.info(f"[AIService] Proposed new sub-niche '{niche_val}' for @{username}")
-                        results[username] = {
-                            "niche_category": str(data.get("niche_category") or "other"),
-                            "niche": niche_val,
-                            "gender": str(data.get("gender") or "unknown"),
-                        }
+                    _ingest(username, data)
             except (json.JSONDecodeError, Exception) as e:
-                logger.warning(f"[AIService] classify_following_usernames_batch batch error: {e}")
+                # A truncated/malformed batch used to be dropped whole. Salvage every COMPLETE
+                # "username": {...} entry so a cut-off tail loses only its last (partial) item.
+                salvaged = self._salvage_batch_entries(text)
+                for username, data in salvaged.items():
+                    _ingest(username, data)
+                logger.warning(
+                    f"[AIService] classify_following_usernames_batch batch error: {e}; "
+                    f"salvaged {len(salvaged)}/{len(batch)} entr(y/ies)"
+                )
                 continue
 
         return results
@@ -376,6 +394,21 @@ class AIService:
             result["tags"] = [t.strip().strip('"') for t in raw_tags.split(",") if t.strip().strip('"')]
 
         return result if result.get("niche_category") else None
+
+    def _salvage_batch_entries(self, text: str) -> Dict[str, Dict[str, Any]]:
+        """Recover complete '"username": { ... }' objects from a truncated/malformed batch JSON,
+        so a cut-off response loses only its last (incomplete) entry instead of the whole batch.
+        The batch entries are flat objects (no nesting), so a non-greedy brace match is enough."""
+        import re
+        salvaged: Dict[str, Dict[str, Any]] = {}
+        if not text:
+            return salvaged
+        for m in re.finditer(r'"([^"\\]+)"\s*:\s*(\{[^{}]*\})', text):
+            try:
+                salvaged[m.group(1)] = json.loads(m.group(2))
+            except json.JSONDecodeError:
+                continue
+        return salvaged
 
     # ------------------------------------------------------------------
     # High-level AI operations
