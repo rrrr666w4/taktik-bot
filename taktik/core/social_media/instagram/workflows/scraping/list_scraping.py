@@ -24,6 +24,19 @@ console = Console()
 class ScrapingListMixin(DeepQualifyMixin):
     """Mixin: generic list scraping, hashtag scraping, post URL scraping."""
 
+    def _has_profile_filters(self) -> bool:
+        """True when the operator asked for ANY profile filter.
+
+        Used to decide what to do with a profile whose enrichment failed: without enriched data
+        no filter can be evaluated, so the profile was saved (and deep-qualified, i.e. PAID for)
+        unchecked — silently violating the operator's criteria. When filters are on, an
+        unverifiable profile is skipped instead; when none are set, nothing changes.
+        """
+        if any(self.config.get(key) is not None
+               for key in ('minFollowers', 'maxFollowers', 'minFollowing', 'maxFollowing', 'minPosts')):
+            return True
+        return bool(self.config.get('requireProfilePicture')) or bool(self.config.get('skipPrivateProfiles', True))
+
     def _get_profile_filter_reason(self, profile: Dict[str, Any]) -> Optional[str]:
         min_followers = self.config.get('minFollowers')
         max_followers = self.config.get('maxFollowers')
@@ -291,7 +304,16 @@ class ScrapingListMixin(DeepQualifyMixin):
                             if enriched_data:
                                 profile_data['profile_pic_base64'] = enriched_data.get('profile_pic_base64')
 
-                            filter_reason = self._get_profile_filter_reason(profile_data) if enriched_data else None
+                            # No enriched data => the filters cannot be evaluated. Saving (and
+                            # deep-qualifying, which costs AI credits) a profile we could not
+                            # check would silently break the operator's criteria, so skip it —
+                            # but only when filters were actually requested.
+                            if enriched_data:
+                                filter_reason = self._get_profile_filter_reason(profile_data)
+                            elif self._has_profile_filters():
+                                filter_reason = 'enrichment failed — cannot check filters'
+                            else:
+                                filter_reason = None
                             if filter_reason:
                                 self.logger.info(f"⏭️  @{username} — skipped ({filter_reason})")
                                 IPCEmitter.emit_profile_skipped(username, filter_reason)

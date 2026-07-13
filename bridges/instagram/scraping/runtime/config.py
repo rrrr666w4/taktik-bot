@@ -5,6 +5,13 @@ from __future__ import annotations
 import re
 
 
+#: Profile filters read by ScrapingListMixin._get_profile_filter_reason. They stay in camelCase
+#: on purpose: that is exactly what the workflow reads (list_scraping.py). Renaming them here
+#: without renaming the reader would silently disable them again.
+_FILTER_MIN_KEYS = ('minFollowers', 'minFollowing', 'minPosts')
+_FILTER_MAX_KEYS = ('maxFollowers', 'maxFollowing')
+
+
 def build_scraping_config(config: dict) -> dict:
     scraping_config = {
         'type': config.get('type', 'target'),
@@ -14,6 +21,31 @@ def build_scraping_config(config: dict) -> dict:
         'save_to_db': config.get('saveToDb', True),
         'enrich_profiles': config.get('enrichProfiles', False),
     }
+
+    # Profile filters. This mapper is a WHITELIST: anything not copied here never reaches the
+    # workflow. The filter keys were missing, so `_get_profile_filter_reason` read them from an
+    # empty config and EVERY filter evaluated to "disabled" — no min followers, no min posts, no
+    # skip-private. Profiles the operator meant to exclude were scraped, saved AND paid for in AI
+    # deep-qualification (device report: a 0-post profile scraped with minPosts=1).
+    #
+    # `is not None`, never `or`: the front sends null for an empty field, and 0 is a meaningful
+    # lower bound — `int(x or 0)` would both re-enable a disabled filter and hide a real 0.
+    for key in _FILTER_MIN_KEYS:
+        value = config.get(key)
+        if value is not None:
+            scraping_config[key] = int(value)
+
+    # UPPER bounds: 0 means NO LIMIT, not "at most zero followers".
+    # The UI lets 0 sit in a max field (real config seen on a run: "Max followers: 0"), and every
+    # operator reads that as "no maximum". Forwarding it literally would filter out every profile
+    # with a single follower and scrape NOTHING — a far worse bug than the one being fixed.
+    for key in _FILTER_MAX_KEYS:
+        value = config.get(key)
+        if value is not None and int(value) > 0:
+            scraping_config[key] = int(value)
+
+    scraping_config['requireProfilePicture'] = bool(config.get('requireProfilePicture', False))
+    scraping_config['skipPrivateProfiles'] = bool(config.get('skipPrivateProfiles', True))
 
     # Dedup filter:
     #   rescrapeAfterDays not set: Python defaults to skip all known profiles.
