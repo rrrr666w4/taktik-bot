@@ -480,6 +480,91 @@ class AIService:
             "reason": reason,
         }
 
+    @staticmethod
+    def _engagement_relativity(account_niche: Optional[str], account_sub_niche: Optional[str]) -> str:
+        """The shared 'judge THIS profile relative to OUR account' instruction — single source for
+        both the vision classification and the text-only cached-profile verdict, so the two paths
+        can never drift apart in what 'relevant' means."""
+        if account_niche:
+            who = f"a '{account_niche}'" + (f" / '{account_sub_niche}'" if account_sub_niche else "") + " account"
+            return (
+                f"We are GROWING {who}. Judge whether engaging THIS profile is worthwhile for that "
+                "account: consider niche ADJACENCY (e.g. fitness ↔ bodybuilding ↔ nutrition are adjacent), "
+                "audience overlap, and whether it's a real, active, human-ish account (not a spam/store/bot). "
+            )
+        return (
+            "Judge whether THIS profile is a worthwhile engagement target in general: a real, active, "
+            "niche-coherent, human-ish account (not a spam/store/bot). "
+        )
+
+    def engagement_verdict_for_known_profile(
+        self,
+        username: str,
+        cached: Dict[str, Any],
+        account_niche: str = None,
+        account_sub_niche: str = None,
+        response_language: str = 'en',
+    ) -> Dict[str, Any]:
+        """Engagement verdict for a profile whose AI classification is ALREADY stored — TEXT-ONLY
+        (no screenshot, no vision tokens). Judges the KNOWN niche/profession/bio against the
+        operated account's niche, so relevance gating also covers cached profiles (they used to
+        fail-open: qualification reused, verdict never computed, gate had nothing to act on).
+        The verdict is account-relative, so it is recomputed per run and never persisted.
+
+        Returns {"success": True, "engagement": {...normalized...}} or {"success": False, ...}."""
+        t0 = time.time()
+        _lang_map = {'fr': 'French', 'en': 'English', 'de': 'German', 'es': 'Spanish', 'pt': 'Portuguese', 'it': 'Italian', 'nl': 'Dutch'}
+        _lang_full = _lang_map.get(response_language, 'English')
+
+        system_prompt = (
+            "You judge Instagram engagement targets for an account we operate.\n"
+            + self._engagement_relativity(account_niche, account_sub_niche) +
+            "Be SELECTIVE — not every profile deserves a follow or a comment: "
+            "'follow' (worth following), 'comment' (worth a comment — STRICTER than follow), "
+            "'like' (worth liking its posts), 'score' (0.0-1.0 relevance confidence).\n"
+            f"Write 'reason' (one short sentence) in {_lang_full}.\n"
+            "Respond ONLY with valid JSON — no extra text:\n"
+            '{"relevant": true, "follow": true, "comment": false, "like": true, '
+            '"score": 0.8, "reason": "short reason"}'
+        )
+
+        parts = [f"Profile @{username} — already-classified data:"]
+        if cached.get("niche_category") or cached.get("niche"):
+            parts.append(f"Niche: {cached.get('niche_category') or '?'} / {cached.get('niche') or '?'}")
+        if cached.get("profession"):
+            parts.append(f"Profession: {cached['profession']}")
+        bio = (cached.get("biography") or "").strip()
+        if bio:
+            parts.append(f"Bio: {bio[:400]}")
+        if cached.get("full_name"):
+            parts.append(f"Full name: {cached['full_name']}")
+        if cached.get("is_business"):
+            parts.append("Business account: yes")
+        user_prompt = "\n".join(parts)
+
+        result = self.text_completion(system_prompt, user_prompt, temperature=0.2, max_tokens=220)
+        duration_ms = int((time.time() - t0) * 1000)
+        if not result.get("success"):
+            return {"success": False, "error": result.get("error", "verdict failed"), "duration_ms": duration_ms}
+
+        raw = (result.get("text") or "").strip()
+        engagement = None
+        try:
+            start, end = raw.find("{"), raw.rfind("}")
+            if start != -1 and end > start:
+                engagement = self._normalize_engagement(json.loads(raw[start:end + 1]))
+        except Exception:
+            engagement = None
+        if engagement is None:
+            return {"success": False, "error": "unparseable verdict", "raw": raw, "duration_ms": duration_ms}
+        return {
+            "success": True,
+            "engagement": engagement,
+            "duration_ms": duration_ms,
+            "model": result.get("model"),
+            "cost_usd": result.get("cost_usd"),
+        }
+
     def classify_profile_niche(self, username: str, screenshot_path: str,
                                profile_context: dict = None,
                                response_language: str = 'en',
@@ -552,18 +637,7 @@ class AIService:
         engagement_instr = ""
         engagement_json = ""
         if include_engagement:
-            if account_niche:
-                who = f"a '{account_niche}'" + (f" / '{account_sub_niche}'" if account_sub_niche else "") + " account"
-                relativity = (
-                    f"We are GROWING {who}. Judge whether engaging THIS profile is worthwhile for that "
-                    "account: consider niche ADJACENCY (e.g. fitness ↔ bodybuilding ↔ nutrition are adjacent), "
-                    "audience overlap, and whether it's a real, active, human-ish account (not a spam/store/bot). "
-                )
-            else:
-                relativity = (
-                    "Judge whether THIS profile is a worthwhile engagement target in general: a real, active, "
-                    "niche-coherent, human-ish account (not a spam/store/bot). "
-                )
+            relativity = self._engagement_relativity(account_niche, account_sub_niche)
             engagement_instr = (
                 "\nENGAGEMENT RELEVANCE: " + relativity +
                 "Be SELECTIVE — not every profile deserves a follow or a comment. Return an 'engagement' object: "

@@ -179,3 +179,107 @@ def test_load_cached_qualification_handles_db_errors(monkeypatch):
 
     monkeypatch.setattr("taktik.core.database.local.service.get_local_database", _boom)
     assert _load_cached_qualification("whoever") is None
+
+
+# ---------------------------------------------------------------------------
+# Cached-profile relevance verdict (the gating cache hole)
+# ---------------------------------------------------------------------------
+# A profile already AI-qualified reuses its stored niche and skips the vision call — which also
+# skipped the engagement verdict, so cached profiles were NEVER gated (fail-open). With gating on,
+# the hook now judges the KNOWN niche against the account persona via a cheap text-only call.
+
+def _install_profile_hook(monkeypatch, fake_ai, ai_config, captured):
+    from taktik.core.social_media.instagram.actions.core.base_business.interaction_engine import (
+        InteractionEngineMixin,
+    )
+
+    def fake_perform(self_engine, username, config, profile_data=None):
+        captured["profile_data"] = profile_data
+        return "performed"
+
+    # Patch BEFORE install so the hook's original_perform captures the fake; pytest's monkeypatch
+    # restores the REAL method afterwards even though install overwrote the attribute again.
+    monkeypatch.setattr(InteractionEngineMixin, "_perform_interactions_on_profile", fake_perform)
+    # Silence the Agent-card emission (module-level IPCEmitter writes JSON to stdout).
+    monkeypatch.setattr(
+        "taktik.core.social_media.instagram.workflows.core.ai_hooks.IPCEmitter.emit_action",
+        staticmethod(lambda *a, **k: None),
+    )
+    install_instagram_ai_hooks(ai=fake_ai, ai_config=ai_config, device=object(), log=lambda *a: None)
+    return InteractionEngineMixin
+
+
+GATING = {"enabled": True, "minScore": 0.4, "maskIntents": True, "dryRun": False}
+CACHED_ROW = {"username": "known", "niche": "Hair & Nail Art", "niche_category": "beauty_wellness"}
+
+
+def test_cached_profile_gets_text_verdict_when_gating_on(monkeypatch):
+    _patch_db(monkeypatch, [CACHED_ROW])
+    captured = {}
+
+    class FakeAI:
+        def engagement_verdict_for_known_profile(self, **kwargs):
+            captured["verdict_kwargs"] = kwargs
+            return {"success": True, "engagement": {
+                "relevant": True, "follow": True, "comment": False, "like": True,
+                "score": 0.8, "reason": "adjacent",
+            }}
+
+    engine_cls = _install_profile_hook(
+        monkeypatch, FakeAI(),
+        {"profileAnalysis": True, "accountNiche": "beauty_wellness", "relevanceGating": GATING},
+        captured,
+    )
+    profile_data = {}
+    result = engine_cls._perform_interactions_on_profile(object(), "known", {}, profile_data)
+
+    assert result == "performed"
+    # The verdict AND the gating settings reached the engine (what apply_relevance_gating consumes).
+    assert captured["profile_data"]["ai_engagement"]["relevant"] is True
+    assert captured["profile_data"]["ai_relevance_gating"] == GATING
+    # Judged relative to the operated account, fed from the CACHED classification.
+    assert captured["verdict_kwargs"]["account_niche"] == "beauty_wellness"
+    assert captured["verdict_kwargs"]["cached"]["niche"] == "Hair & Nail Art"
+    # The reuse markers stay (no vision re-analysis happened).
+    assert captured["profile_data"]["ai_reused_qualification"] is True
+
+
+def test_cached_profile_skips_verdict_when_gating_off(monkeypatch):
+    # Without gating there is nothing to enforce — don't spend tokens on cached profiles.
+    _patch_db(monkeypatch, [CACHED_ROW])
+    captured = {}
+
+    class FakeAI:
+        def engagement_verdict_for_known_profile(self, **kwargs):
+            raise AssertionError("must not be called when gating is off")
+
+    engine_cls = _install_profile_hook(
+        monkeypatch, FakeAI(), {"profileAnalysis": True, "accountNiche": "beauty_wellness"}, captured,
+    )
+    profile_data = {}
+    result = engine_cls._perform_interactions_on_profile(object(), "known", {}, profile_data)
+
+    assert result == "performed"
+    assert "ai_engagement" not in captured["profile_data"]
+
+
+def test_cached_profile_fails_open_when_verdict_errors(monkeypatch):
+    # Historic behaviour preserved: verdict failure -> no verdict on profile_data -> engine
+    # passthrough (fail-open), and the interaction still runs.
+    _patch_db(monkeypatch, [CACHED_ROW])
+    captured = {}
+
+    class FakeAI:
+        def engagement_verdict_for_known_profile(self, **kwargs):
+            return {"success": False, "error": "model hiccup"}
+
+    engine_cls = _install_profile_hook(
+        monkeypatch, FakeAI(),
+        {"profileAnalysis": True, "accountNiche": "beauty_wellness", "relevanceGating": GATING},
+        captured,
+    )
+    profile_data = {}
+    result = engine_cls._perform_interactions_on_profile(object(), "known", {}, profile_data)
+
+    assert result == "performed"
+    assert "ai_engagement" not in captured["profile_data"]

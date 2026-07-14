@@ -350,6 +350,45 @@ def install_instagram_ai_hooks(
             # {enabled, minScore, maskIntents, dryRun}. Absent/disabled → engine passthrough.
             relevance_gating = ai_config.get("relevanceGating") or ai_config.get("relevance_gating")
 
+            def _surface_engagement(username, engagement, profile_data):
+                """Shared verdict surfacing (vision path AND cached path): deposit the verdict +
+                gating settings on profile_data for the interaction engine, log the decision
+                trace, and emit the 'relevance' Agent card."""
+                if isinstance(profile_data, dict):
+                    profile_data["ai_engagement"] = engagement
+                    # Hand the gating settings to the engine alongside the verdict
+                    # (both consumed in _perform_interactions_on_profile).
+                    if relevance_gating:
+                        profile_data["ai_relevance_gating"] = relevance_gating
+                would = []
+                if engagement.get("follow"):
+                    would.append("follow")
+                if engagement.get("comment"):
+                    would.append("comment")
+                if engagement.get("like"):
+                    would.append("like")
+                score = engagement.get("score")
+                score_str = f"{score:.2f}" if isinstance(score, (int, float)) else "?"
+                log(
+                    "info",
+                    (
+                        f"  ↳ pertinence IA @{username}: "
+                        f"{'pertinent' if engagement.get('relevant') else 'non pertinent'} "
+                        f"(score {score_str}) → {', '.join(would) or 'rien'}"
+                        + (f" · {engagement['reason']}" if engagement.get("reason") else "")
+                    ),
+                )
+                # Surface the WHY as a proper Agent card (prod + Lab), not just a log:
+                # "is this profile worth engaging vs OUR niche, and why".
+                IPCEmitter.emit_action("relevance", username, {
+                    "relevant": bool(engagement.get("relevant")),
+                    "score": engagement.get("score"),
+                    "reason": engagement.get("reason"),
+                    "follow": bool(engagement.get("follow")),
+                    "comment": bool(engagement.get("comment")),
+                    "like": bool(engagement.get("like")),
+                })
+
             def ai_perform_interactions(self_engine, username, config, profile_data=None):
                 # Reuse an existing AI qualification instead of re-paying for the vision classification:
                 # if this profile was already scraped + AI-qualified (its niche is in the DB), skip the
@@ -363,6 +402,24 @@ def install_instagram_ai_hooks(
                         profile_data["ai_niche"] = cached.get("niche")
                         profile_data["ai_niche_category"] = cached.get("niche_category")
                         profile_data["ai_reused_qualification"] = True
+                    # Relevance gating needs a verdict, and this cached path skips the vision call
+                    # that produces it — cached profiles used to FAIL-OPEN (never gated). Judge the
+                    # KNOWN niche/bio against the account persona with a cheap TEXT-only call (no
+                    # screenshot). Account-relative → recomputed per run, never persisted. Any
+                    # failure keeps the historic fail-open behaviour.
+                    if relevance_gating and isinstance(profile_data, dict):
+                        try:
+                            verdict = ai.engagement_verdict_for_known_profile(
+                                username=username,
+                                cached=cached,
+                                account_niche=account_niche,
+                                account_sub_niche=account_sub_niche,
+                                response_language=language,
+                            )
+                            if verdict.get("success") and isinstance(verdict.get("engagement"), dict):
+                                _surface_engagement(username, verdict["engagement"], profile_data)
+                        except Exception as exc:
+                            log("warning", f"Cached-profile relevance verdict failed for @{username}: {exc}")
                     return original_perform(self_engine, username, config, profile_data)
 
                 try:
@@ -411,40 +468,7 @@ def install_instagram_ai_hooks(
                         # ENFORCES it (skip / mask intents) — otherwise it stays observation-only.
                         engagement = classification.get("engagement")
                         if isinstance(engagement, dict):
-                            if isinstance(profile_data, dict):
-                                profile_data["ai_engagement"] = engagement
-                                # Hand the gating settings to the engine alongside the verdict
-                                # (both consumed in _perform_interactions_on_profile).
-                                if relevance_gating:
-                                    profile_data["ai_relevance_gating"] = relevance_gating
-                            would = []
-                            if engagement.get("follow"):
-                                would.append("follow")
-                            if engagement.get("comment"):
-                                would.append("comment")
-                            if engagement.get("like"):
-                                would.append("like")
-                            score = engagement.get("score")
-                            score_str = f"{score:.2f}" if isinstance(score, (int, float)) else "?"
-                            log(
-                                "info",
-                                (
-                                    f"  ↳ pertinence IA @{username}: "
-                                    f"{'pertinent' if engagement.get('relevant') else 'non pertinent'} "
-                                    f"(score {score_str}) → {', '.join(would) or 'rien'}"
-                                    + (f" · {engagement['reason']}" if engagement.get("reason") else "")
-                                ),
-                            )
-                            # Surface the WHY as a proper Agent card (prod + Lab), not just a log:
-                            # "is this profile worth engaging vs OUR niche, and why".
-                            IPCEmitter.emit_action("relevance", username, {
-                                "relevant": bool(engagement.get("relevant")),
-                                "score": engagement.get("score"),
-                                "reason": engagement.get("reason"),
-                                "follow": bool(engagement.get("follow")),
-                                "comment": bool(engagement.get("comment")),
-                                "like": bool(engagement.get("like")),
-                            })
+                            _surface_engagement(username, engagement, profile_data)
                 except Exception as exc:
                     log("warning", f"AI profile analysis error for @{username}: {exc}")
 
