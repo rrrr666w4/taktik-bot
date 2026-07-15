@@ -124,6 +124,20 @@ class SessionManager:
             log.info(f"🛑 Session ended: {stop_reason}")
             return False, stop_reason
 
+        # Plafond d'actions écrites pour CETTE session (injecté par le desktop). Complète le budget
+        # du jour : il étale la journée sur plusieurs sessions douces au lieu d'un dump unique. Compte
+        # les actions écrites de la session (like/follow/commentaire) — les vues de story, passives,
+        # n'entrent pas dans le budget. 0/absent = pas de plafond (standalone inchangé).
+        max_per_session = int(self._warmup_policy.get('max_actions_per_session', 0) or 0)
+        if max_per_session > 0:
+            session_actions = (
+                self.counters['likes'] + self.counters['follows'] + self.counters['comments']
+            )
+            if session_actions >= max_per_session:
+                reason = f"Session action cap reached ({session_actions}/{max_per_session})"
+                log.info(f"🛑 Session ended: {reason}")
+                return False, reason
+
         return True, ""
 
     def _check_daily_budget(self) -> str:

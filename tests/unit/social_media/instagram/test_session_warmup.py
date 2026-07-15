@@ -103,3 +103,41 @@ def test_update_config_refreshes_warmup_caps():
     # A config swap lowering the cap below today's total must now stop.
     sm.update_config({'session_settings': {'warmup_policy': {'max_actions_per_day': 50}}})
     assert sm.should_continue()[0] is False
+
+
+# ── Per-session action cap ───────────────────────────────────────────────────────
+
+def test_stops_when_session_action_cap_reached():
+    # Written actions this session (like/follow/comment) hitting the cap ends the session,
+    # independent of the daily budget (no provider needed).
+    sm = _sm(warmup={'max_actions_per_session': 25})
+    sm.counters['likes'] = 15
+    sm.counters['follows'] = 7
+    sm.counters['comments'] = 3  # 25 total
+    ok, reason = sm.should_continue()
+    assert ok is False
+    assert 'Session action cap' in reason
+
+
+def test_continues_when_under_session_cap():
+    sm = _sm(warmup={'max_actions_per_session': 25})
+    sm.counters['likes'] = 20
+    sm.counters['follows'] = 3  # 23 total
+    ok, _ = sm.should_continue()
+    assert ok is True
+
+
+def test_session_cap_ignores_story_views():
+    # Story VIEWS are passive and excluded from the budget; they must not count toward the cap.
+    sm = _sm(warmup={'max_actions_per_session': 25})
+    sm.counters['likes'] = 5
+    sm.counters['stories_watched'] = 100
+    ok, _ = sm.should_continue()
+    assert ok is True
+
+
+def test_no_session_cap_is_a_noop():
+    sm = _sm(warmup={'max_actions_per_session': 0})
+    sm.counters['likes'] = 999
+    ok, _ = sm.should_continue()
+    assert ok is True

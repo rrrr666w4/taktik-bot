@@ -223,6 +223,7 @@ def test_warmup_policy_is_passed_through_to_session_settings():
                 "maxFollowsPerDay": 10,
                 "maxCommentsPerDay": 5,
                 "minActionGapSeconds": 45,
+                "maxActionsPerSession": 25,
             },
         }
     )
@@ -232,6 +233,7 @@ def test_warmup_policy_is_passed_through_to_session_settings():
         "max_follows_per_day": 10,
         "max_comments_per_day": 5,
         "min_action_gap_seconds": 45.0,
+        "max_actions_per_session": 25,
     }
 
 

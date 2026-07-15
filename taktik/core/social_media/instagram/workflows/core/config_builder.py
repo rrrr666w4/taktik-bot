@@ -315,6 +315,7 @@ def build_instagram_automation_config(raw_config: Dict[str, Any]) -> Dict[str, A
             "max_follows_per_day": int(warmup.get("maxFollowsPerDay", 0) or 0),
             "max_comments_per_day": int(warmup.get("maxCommentsPerDay", 0) or 0),
             "min_action_gap_seconds": float(warmup.get("minActionGapSeconds", 0) or 0),
+            "max_actions_per_session": int(warmup.get("maxActionsPerSession", 0) or 0),
         }
 
     return built
